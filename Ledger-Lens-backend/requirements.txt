@@ -12,3 +12,4 @@ python-dotenv==1.0.0
 pytesseract==0.3.13
 sqlparse==0.5.4
 tzdata==2025.3
+psycopg2-binary==2.9.11
