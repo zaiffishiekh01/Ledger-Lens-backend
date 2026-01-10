@@ -58,13 +58,22 @@ def process_pdf_background(pdf_upload_id):
         
         file_path = pdf_upload.file.path
         logger.info(f"[PDF {pdf_upload_id}] File path: {file_path}")
-        logger.info(f"[PDF {pdf_upload_id}] Starting PDF extraction...")
+        
+        # Check for existing progress (resume from last page)
+        start_page = 0
+        existing_text = []
+        if pdf_upload.extracted_text_pages and len(pdf_upload.extracted_text_pages) > 0:
+            start_page = pdf_upload.current_page + 1
+            existing_text = pdf_upload.extracted_text_pages.copy()
+            logger.info(f"[PDF {pdf_upload_id}] Resuming from page {start_page + 1}, {len(existing_text)} pages already extracted")
+        else:
+            logger.info(f"[PDF {pdf_upload_id}] Starting PDF extraction from beginning...")
         
         extractor = BankStatementExtractor()
         logger.info(f"[PDF {pdf_upload_id}] Extractor initialized, calling process_bank_statement...")
         
-        # Pass pdf_upload_id to extractor for checkpoint checks
-        results = extractor.process_bank_statement(file_path, pdf_upload_id)
+        # Pass pdf_upload_id, start_page, and existing_text for resume
+        results = extractor.process_bank_statement(file_path, pdf_upload_id, start_page, existing_text)
         
         # Check if processing was stopped (PDF deleted)
         if results and 'error' in results and results['error'] == "PDF processing stopped":
@@ -101,6 +110,9 @@ def process_pdf_background(pdf_upload_id):
         # Store analytics in account_info for easy access
         if analytics:
             pdf_upload.account_info['analytics'] = analytics
+        # Clear progress tracking fields on completion
+        pdf_upload.extracted_text_pages = []
+        pdf_upload.current_page = 0
         pdf_upload.save()
         logger.info(f"[PDF {pdf_upload_id}] Results saved to database")
         

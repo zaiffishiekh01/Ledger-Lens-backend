@@ -320,23 +320,25 @@ class BankStatementExtractor:
         
         return cleaned
 
-    def extract_text_from_pdf(self, pdf_path, pdf_upload_id=None):
+    def extract_text_from_pdf(self, pdf_path, pdf_upload_id=None, start_page=0, existing_text=None):
         """Extract text from PDF using PyMuPDF and OCR"""
         from .models import PDFUpload
         
         doc = fitz.open(pdf_path)
         total_pages = len(doc)
-        logger.info(f"[EXTRACTOR] Opening PDF with {total_pages} pages")
-        all_text = []
+        logger.info(f"[EXTRACTOR] Opening PDF with {total_pages} pages, starting from page {start_page + 1}")
         
-        for page_num in range(total_pages):
+        # Use existing text if resuming, otherwise start fresh
+        all_text = existing_text if existing_text else []
+        
+        for page_num in range(start_page, total_pages):
             page_start = datetime.now()
             logger.info(f"[EXTRACTOR] Processing page {page_num + 1}/{total_pages}...")
             
             # Checkpoint: Check if PDF deleted after each page
             if pdf_upload_id:
                 try:
-                    PDFUpload.objects.get(id=pdf_upload_id)
+                    pdf_upload = PDFUpload.objects.get(id=pdf_upload_id)
                 except PDFUpload.DoesNotExist:
                     logger.info(f"[EXTRACTOR] PDF {pdf_upload_id} deleted, stopping at page {page_num + 1}")
                     doc.close()
@@ -371,6 +373,19 @@ class BankStatementExtractor:
             # Combine direct text and OCR text
             combined_text = direct_text + "\n" + ocr_text
             all_text.append(combined_text)
+            
+            # Save progress to database after each page
+            if pdf_upload_id:
+                try:
+                    pdf_upload = PDFUpload.objects.get(id=pdf_upload_id)
+                    pdf_upload.extracted_text_pages = all_text.copy()
+                    pdf_upload.current_page = page_num
+                    pdf_upload.save()
+                    logger.info(f"[EXTRACTOR] Progress saved: page {page_num + 1}/{total_pages}")
+                except PDFUpload.DoesNotExist:
+                    logger.info(f"[EXTRACTOR] PDF {pdf_upload_id} deleted, stopping at page {page_num + 1}")
+                    doc.close()
+                    return None
             
             page_elapsed = (datetime.now() - page_start).total_seconds()
             logger.info(f"[EXTRACTOR] Page {page_num + 1}/{total_pages} completed in {page_elapsed:.2f} seconds")
@@ -1106,14 +1121,14 @@ class BankStatementExtractor:
         
         return 'arabic' if arabic_chars > english_chars else 'english'
 
-    def process_bank_statement(self, pdf_path, pdf_upload_id=None):
+    def process_bank_statement(self, pdf_path, pdf_upload_id=None, start_page=0, existing_text=None):
         """Main method to process bank statement PDF"""
         start_time = datetime.now()
-        logger.info(f"[EXTRACTOR] Starting bank statement processing: {pdf_path}")
+        logger.info(f"[EXTRACTOR] Starting bank statement processing: {pdf_path}, start_page={start_page}")
         
         # Extract text from PDF
         logger.info(f"[EXTRACTOR] Step 1: Extracting text from PDF...")
-        text_pages = self.extract_text_from_pdf(pdf_path, pdf_upload_id)
+        text_pages = self.extract_text_from_pdf(pdf_path, pdf_upload_id, start_page, existing_text)
         
         if not text_pages:
             # Check if PDF was deleted (None means deleted, empty list means error)

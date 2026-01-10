@@ -17,6 +17,10 @@ class PDFUpload(models.Model):
     pages_processed = models.IntegerField(default=0)
     monthly_analysis = models.JSONField(default=dict, blank=True)
     
+    # Progress tracking for resume
+    extracted_text_pages = models.JSONField(default=list, blank=True)  # Store text per page
+    current_page = models.IntegerField(default=0)  # Last completed page (0-indexed)
+    
     def __str__(self):
         return f"PDF Upload {self.id} - {self.file.name}"
     
