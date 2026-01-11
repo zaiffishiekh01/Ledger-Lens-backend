@@ -58,10 +58,11 @@ def process_pdf_background(pdf_upload_id):
             return
         
         # Get file path (works with both local and Supabase Storage)
-        if hasattr(pdf_upload.file, 'path'):
-            # Local filesystem
-            file_path = pdf_upload.file.path
-        else:
+        # Check storage type - S3 storage doesn't support .path attribute
+        from django.core.files.storage import default_storage
+        is_s3_storage = hasattr(default_storage, 'bucket_name') or 's3' in str(type(default_storage)).lower()
+        
+        if is_s3_storage:
             # Supabase Storage (S3) - download to temp file
             import tempfile
             temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
@@ -70,6 +71,9 @@ def process_pdf_background(pdf_upload_id):
             file_path = temp_file.name
             temp_file_path = file_path  # Store for cleanup
             logger.info(f"[PDF {pdf_upload_id}] Downloaded from Supabase Storage to temp file: {file_path}")
+        else:
+            # Local filesystem
+            file_path = pdf_upload.file.path
         
         logger.info(f"[PDF {pdf_upload_id}] File path: {file_path}")
         
