@@ -165,13 +165,28 @@ if USE_SUPABASE_STORAGE:
     AWS_S3_FILE_OVERWRITE = False
     AWS_QUERYSTRING_AUTH = True  # Use signed URLs for secure access
     
-    # Use S3 for media files
-    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    # Use S3 for media files (Django 6.0 uses STORAGES dict)
+    STORAGES = {
+        'default': {
+            'BACKEND': 'storages.backends.s3boto3.S3Boto3Storage',
+        },
+        'staticfiles': {
+            'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+        },
+    }
     MEDIA_URL = f'{AWS_S3_ENDPOINT_URL}/{AWS_STORAGE_BUCKET_NAME}/'
-    print(f"[SETTINGS] Using Supabase Storage backend: {DEFAULT_FILE_STORAGE}")
+    print(f"[SETTINGS] Using Supabase Storage backend: storages.backends.s3boto3.S3Boto3Storage")
     print(f"[SETTINGS] MEDIA_URL: {MEDIA_URL}")
 else:
     # Local filesystem (development)
+    STORAGES = {
+        'default': {
+            'BACKEND': 'django.core.files.storage.FileSystemStorage',
+        },
+        'staticfiles': {
+            'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+        },
+    }
     MEDIA_URL = '/media/'
     MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
     print(f"[SETTINGS] Using local filesystem storage")
