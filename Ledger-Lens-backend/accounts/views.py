@@ -51,7 +51,13 @@ def process_pdf_background(pdf_upload_id):
     temp_file_path = None
     try:
         logger.info(f"[PDF {pdf_upload_id}] Background processing started at {start_time}")
-        pdf_upload = PDFUpload.objects.get(id=pdf_upload_id)
+        
+        # Immediate check: Verify PDF still exists
+        try:
+            pdf_upload = PDFUpload.objects.get(id=pdf_upload_id)
+        except PDFUpload.DoesNotExist:
+            logger.info(f"[PDF {pdf_upload_id}] PDF deleted before processing started, stopping")
+            return
         
         # Check if already processed (thread safety)
         if pdf_upload.processed:
@@ -87,6 +93,13 @@ def process_pdf_background(pdf_upload_id):
             logger.info(f"[PDF {pdf_upload_id}] Resuming from page {start_page + 1}, {len(existing_text)} pages already extracted")
         else:
             logger.info(f"[PDF {pdf_upload_id}] Starting PDF extraction from beginning...")
+        
+        # Check before extraction: Verify PDF still exists
+        try:
+            PDFUpload.objects.get(id=pdf_upload_id)
+        except PDFUpload.DoesNotExist:
+            logger.info(f"[PDF {pdf_upload_id}] PDF deleted before extraction started, stopping")
+            return
         
         extractor = BankStatementExtractor()
         logger.info(f"[PDF {pdf_upload_id}] Extractor initialized, calling process_bank_statement...")
