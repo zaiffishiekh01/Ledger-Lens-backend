@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
+from django.db import transaction
 import os
 import json
 import threading
@@ -220,6 +221,27 @@ def upload_pdf(request):
                 {'error': 'Only PDF files are allowed'}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
+        
+        # Clear all pending PDFs and their data before uploading new one
+        logger.info("Clearing all pending PDF uploads and storage...")
+        pending_pdfs = PDFUpload.objects.filter(processed=False)
+        pending_count = pending_pdfs.count()
+        logger.info(f"Found {pending_count} pending PDF(s) to delete")
+        
+        with transaction.atomic():
+            for pdf_upload in pending_pdfs:
+                # Delete file from storage (S3 or local)
+                if pdf_upload.file:
+                    try:
+                        pdf_upload.file.delete(save=False)
+                        logger.info(f"[PDF {pdf_upload.id}] File deleted from storage")
+                    except Exception as e:
+                        logger.warning(f"[PDF {pdf_upload.id}] Error deleting file: {str(e)}")
+                # Delete the PDF upload record (transactions deleted via CASCADE)
+                pdf_upload.delete()
+                logger.info(f"[PDF {pdf_upload.id}] PDF upload record deleted")
+        
+        logger.info(f"Cleared {pending_count} pending PDF(s) and their data")
         
         # Create PDF upload record
         logger.info(f"Creating PDF upload record for: {pdf_file.name}")
