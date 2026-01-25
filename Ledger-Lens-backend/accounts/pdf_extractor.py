@@ -1284,9 +1284,9 @@ class BankStatementExtractor:
             cash_flow_stability = stdev / mean_net_change if mean_net_change != 0 else 0
         else:
             cash_flow_stability = 0
-        # Total foreign transactions and amount: sum of all months
-        total_foreign_transactions = sum(m.get('international_inward_count', 0) for m in months)
-        total_foreign_amount = sum(m.get('international_inward_total', 0) for m in months)
+        # Total foreign transactions and amount: sum of all months (inward + outward)
+        total_foreign_transactions = sum(m.get('international_inward_count', 0) + m.get('international_outward_count', 0) for m in months)
+        total_foreign_amount = sum(m.get('international_inward_total', 0) + m.get('international_outward_total', 0) for m in months)
         # Sum and average of total inflow and outflow for all months
         inflows = [m.get('total_credit', 0) for m in months if m.get('total_credit') is not None]
         outflows = [abs(m.get('total_debit', 0)) for m in months if m.get('total_debit') is not None]
