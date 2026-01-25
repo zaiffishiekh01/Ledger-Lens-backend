@@ -1,5 +1,7 @@
 from django.db import models
 from django.utils import timezone
+from django.contrib.auth.hashers import make_password, check_password
+from datetime import timedelta
 import json
 
 # Create your models here.
@@ -41,3 +43,101 @@ class Transaction(models.Model):
     
     class Meta:
         ordering = ['date']
+
+
+class PasscodeConfig(models.Model):
+    """Single-row model for passcode configuration and rate limiting"""
+    passcode_hash = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    last_reset_at = models.DateTimeField(auto_now=True)
+    
+    # Rate limiting for passcode attempts
+    passcode_attempts = models.IntegerField(default=0)
+    passcode_locked_until = models.DateTimeField(null=True, blank=True)
+    
+    # Rate limiting for username/password attempts
+    creds_attempts = models.IntegerField(default=0)
+    creds_locked_until = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        verbose_name = "Passcode Configuration"
+        verbose_name_plural = "Passcode Configuration"
+    
+    def __str__(self):
+        return "Passcode Configuration"
+    
+    @classmethod
+    def get_config(cls):
+        """Get or create the single configuration instance"""
+        config, _ = cls.objects.get_or_create(
+            pk=1,
+            defaults={
+                'passcode_hash': make_password('000000'),
+                'expires_at': timezone.now() + timedelta(days=7)
+            }
+        )
+        return config
+    
+    def is_passcode_valid(self, code: str) -> bool:
+        """Check if provided passcode matches"""
+        return check_password(code, self.passcode_hash)
+    
+    def is_passcode_expired(self) -> bool:
+        """Check if passcode has expired"""
+        return timezone.now() > self.expires_at
+    
+    def is_passcode_locked(self) -> bool:
+        """Check if passcode attempts are locked"""
+        if self.passcode_locked_until:
+            if timezone.now() < self.passcode_locked_until:
+                return True
+            else:
+                # Lock expired, reset
+                self.passcode_attempts = 0
+                self.passcode_locked_until = None
+                self.save()
+        return False
+    
+    def is_creds_locked(self) -> bool:
+        """Check if credential attempts are locked"""
+        if self.creds_locked_until:
+            if timezone.now() < self.creds_locked_until:
+                return True
+            else:
+                # Lock expired, reset
+                self.creds_attempts = 0
+                self.creds_locked_until = None
+                self.save()
+        return False
+    
+    def increment_passcode_attempts(self):
+        """Increment passcode attempts and lock if needed"""
+        self.passcode_attempts += 1
+        if self.passcode_attempts >= 5:
+            from datetime import timedelta
+            self.passcode_locked_until = timezone.now() + timedelta(minutes=15)
+        self.save()
+    
+    def increment_creds_attempts(self):
+        """Increment credential attempts and lock if needed"""
+        self.creds_attempts += 1
+        if self.creds_attempts >= 5:
+            from datetime import timedelta
+            self.creds_locked_until = timezone.now() + timedelta(minutes=30)
+        self.save()
+    
+    def reset_attempts(self):
+        """Reset all attempt counters"""
+        self.passcode_attempts = 0
+        self.creds_attempts = 0
+        self.passcode_locked_until = None
+        self.creds_locked_until = None
+        self.save()
+    
+    def reset_passcode(self, new_code: str):
+        """Reset passcode and update expiration"""
+        self.passcode_hash = make_password(new_code)
+        self.expires_at = timezone.now() + timedelta(days=7)
+        self.reset_attempts()
+        self.save()

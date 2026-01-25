@@ -12,11 +12,27 @@ import threading
 import gc
 import logging
 from datetime import datetime
-from .models import PDFUpload, Transaction
+from .models import PDFUpload, Transaction, PasscodeConfig
 from .pdf_extractor import BankStatementExtractor
+from functools import wraps
+from django.utils import timezone
+from datetime import timedelta
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+# Authentication decorator
+def require_authentication(view_func):
+    """Decorator to require authentication for views"""
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        if not request.session.get('authenticated', False):
+            return Response(
+                {'error': 'Authentication required'}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        return view_func(request, *args, **kwargs)
+    return wrapper
 
 # Helper to extract only the required fields for the frontend
 FRONTEND_FIELDS = [
@@ -215,6 +231,7 @@ def process_pdf_background(pdf_upload_id):
 
 @api_view(['POST'])
 @parser_classes([MultiPartParser, FormParser])
+@require_authentication
 def upload_pdf(request):
     """Upload PDF and return immediately, process in background"""
     try:
@@ -294,6 +311,7 @@ def upload_pdf(request):
         )
 
 @api_view(['GET'])
+@require_authentication
 def get_pdf_results(request, pdf_id):
     """Get PDF processing results - returns full data when processed, status when processing"""
     try:
@@ -357,6 +375,7 @@ def get_pdf_results(request, pdf_id):
         )
 
 @api_view(['GET'])
+@require_authentication
 def list_pdf_uploads(request):
     try:
         pdf_uploads = PDFUpload.objects.all()
@@ -369,6 +388,7 @@ def list_pdf_uploads(request):
         )
 
 @api_view(['POST'])
+@require_authentication
 def stop_pdf_processing(request, pdf_id):
     """Stop processing and delete PDF when frontend times out"""
     try:
@@ -400,6 +420,7 @@ def stop_pdf_processing(request, pdf_id):
         )
 
 @api_view(['DELETE'])
+@require_authentication
 def delete_pdf_upload(request, pdf_id):
     try:
         pdf_upload = PDFUpload.objects.get(id=pdf_id)
@@ -420,3 +441,141 @@ def delete_pdf_upload(request, pdf_id):
             {'error': f'Error deleting PDF upload: {str(e)}'}, 
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+# Authentication views
+@api_view(['POST'])
+def login_with_passcode(request):
+    """Login with 6-digit passcode"""
+    try:
+        passcode = request.data.get('passcode', '').strip()
+        
+        if not passcode or len(passcode) != 6 or not passcode.isdigit():
+            return Response(
+                {'error': 'Passcode must be exactly 6 digits'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        config = PasscodeConfig.get_config()
+        
+        # Check if locked
+        if config.is_passcode_locked():
+            remaining = (config.passcode_locked_until - timezone.now()).total_seconds()
+            minutes = int(remaining / 60) + 1
+            return Response(
+                {'error': f'Too many failed attempts. Please wait {minutes} minutes.'}, 
+                status=status.HTTP_429_TOO_MANY_REQUESTS
+            )
+        
+        # Check if expired
+        if config.is_passcode_expired():
+            return Response(
+                {'error': 'Passcode has expired. Please reset using admin credentials.'}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Validate passcode
+        if config.is_passcode_valid(passcode):
+            request.session['authenticated'] = True
+            config.reset_attempts()
+            return Response({'success': True, 'message': 'Login successful'})
+        else:
+            config.increment_passcode_attempts()
+            remaining_attempts = 5 - config.passcode_attempts
+            if remaining_attempts > 0:
+                return Response(
+                    {'error': f'Incorrect passcode. {remaining_attempts} attempts remaining.'}, 
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+            else:
+                return Response(
+                    {'error': 'Too many failed attempts. Please wait 15 minutes.'}, 
+                    status=status.HTTP_429_TOO_MANY_REQUESTS
+                )
+    except Exception as e:
+        return Response(
+            {'error': f'Login error: {str(e)}'}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+def reset_passcode(request):
+    """Reset passcode using admin credentials"""
+    try:
+        username = request.data.get('username', '').strip()
+        password = request.data.get('password', '').strip()
+        new_passcode = request.data.get('new_passcode', '').strip()
+        confirm_passcode = request.data.get('confirm_passcode', '').strip()
+        
+        # Validate inputs
+        if not username or not password:
+            return Response(
+                {'error': 'Username and password are required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not new_passcode or len(new_passcode) != 6 or not new_passcode.isdigit():
+            return Response(
+                {'error': 'New passcode must be exactly 6 digits'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if new_passcode != confirm_passcode:
+            return Response(
+                {'error': 'New passcodes do not match'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        config = PasscodeConfig.get_config()
+        
+        # Check if locked
+        if config.is_creds_locked():
+            remaining = (config.creds_locked_until - timezone.now()).total_seconds()
+            minutes = int(remaining / 60) + 1
+            return Response(
+                {'error': f'Too many failed attempts. Please wait {minutes} minutes.'}, 
+                status=status.HTTP_429_TOO_MANY_REQUESTS
+            )
+        
+        # Verify credentials
+        admin_username = os.getenv('ADMIN_USERNAME', 'admin')
+        admin_password = os.getenv('ADMIN_PASSWORD', '')
+        
+        if username != admin_username or password != admin_password:
+            config.increment_creds_attempts()
+            remaining_attempts = 5 - config.creds_attempts
+            if remaining_attempts > 0:
+                return Response(
+                    {'error': f'Invalid username or password. {remaining_attempts} attempts remaining.'}, 
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+            else:
+                return Response(
+                    {'error': 'Too many failed attempts. Please wait 30 minutes.'}, 
+                    status=status.HTTP_429_TOO_MANY_REQUESTS
+                )
+        
+        # Reset passcode
+        config.reset_passcode(new_passcode)
+        return Response({'success': True, 'message': 'Passcode reset successful'})
+        
+    except Exception as e:
+        return Response(
+            {'error': f'Reset error: {str(e)}'}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+def check_auth_status(request):
+    """Check authentication status"""
+    authenticated = request.session.get('authenticated', False)
+    return Response({'authenticated': authenticated})
+
+
+@api_view(['POST'])
+def logout(request):
+    """Logout and clear session"""
+    request.session.flush()
+    return Response({'success': True, 'message': 'Logged out successfully'})
