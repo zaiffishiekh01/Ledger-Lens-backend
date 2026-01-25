@@ -70,10 +70,10 @@ class PasscodeConfig(models.Model):
     @classmethod
     def get_config(cls):
         """Get or create the single configuration instance"""
-        config, _ = cls.objects.get_or_create(
+        config, created = cls.objects.get_or_create(
             pk=1,
             defaults={
-                'passcode_hash': make_password('000000'),
+                'passcode_hash': make_password('000000'),  # Default placeholder
                 'expires_at': timezone.now() + timedelta(days=7)
             }
         )

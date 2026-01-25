@@ -17,6 +17,7 @@ from .pdf_extractor import BankStatementExtractor
 from functools import wraps
 from django.utils import timezone
 from datetime import timedelta
+from django.contrib.auth.hashers import check_password
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -569,9 +570,36 @@ def reset_passcode(request):
 
 @api_view(['GET'])
 def check_auth_status(request):
-    """Check authentication status"""
+    """Check authentication status, passcode setup status, and lockout status"""
     authenticated = request.session.get('authenticated', False)
-    return Response({'authenticated': authenticated})
+    config = PasscodeConfig.get_config()
+    # Check if passcode is still default (not set up)
+    is_default = check_password('000000', config.passcode_hash)
+    
+    # Check passcode lockout status
+    passcode_locked = False
+    passcode_lockout_minutes = None
+    if config.is_passcode_locked():
+        remaining = (config.passcode_locked_until - timezone.now()).total_seconds()
+        passcode_locked = True
+        passcode_lockout_minutes = max(1, int(remaining / 60))
+    
+    # Check credentials lockout status
+    creds_locked = False
+    creds_lockout_minutes = None
+    if config.is_creds_locked():
+        remaining = (config.creds_locked_until - timezone.now()).total_seconds()
+        creds_locked = True
+        creds_lockout_minutes = max(1, int(remaining / 60))
+    
+    return Response({
+        'authenticated': authenticated,
+        'passcode_setup_required': is_default,
+        'passcode_locked': passcode_locked,
+        'passcode_lockout_minutes': passcode_lockout_minutes,
+        'creds_locked': creds_locked,
+        'creds_lockout_minutes': creds_lockout_minutes
+    })
 
 
 @api_view(['POST'])
