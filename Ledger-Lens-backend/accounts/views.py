@@ -592,14 +592,23 @@ def check_auth_status(request):
         creds_locked = True
         creds_lockout_minutes = max(1, int(remaining / 60))
     
-    return Response({
-        'authenticated': authenticated,
-        'passcode_setup_required': is_default,
-        'passcode_locked': passcode_locked,
-        'passcode_lockout_minutes': passcode_lockout_minutes,
-        'creds_locked': creds_locked,
-        'creds_lockout_minutes': creds_lockout_minutes
-    })
+    # Never cache auth status so returning users get fresh passcode_setup_required
+    # (otherwise browser/proxy could serve stale "setup required" after user has set passcode)
+    return Response(
+        {
+            'authenticated': authenticated,
+            'passcode_setup_required': is_default,
+            'passcode_locked': passcode_locked,
+            'passcode_lockout_minutes': passcode_lockout_minutes,
+            'creds_locked': creds_locked,
+            'creds_lockout_minutes': creds_lockout_minutes,
+        },
+        headers={
+            'Cache-Control': 'no-store, no-cache, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+        },
+    )
 
 
 @api_view(['POST'])
