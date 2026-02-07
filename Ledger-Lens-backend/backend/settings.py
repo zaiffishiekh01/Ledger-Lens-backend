@@ -226,6 +226,7 @@ if not DEBUG:
     
     # Secure cookies (only sent over HTTPS)
     SESSION_COOKIE_SECURE = True
+    SESSION_COOKIE_SAMESITE = 'None'  # required for cross-origin requests (frontend on different domain)
     CSRF_COOKIE_SECURE = True
     
     # Trust proxy headers (needed for Render/Heroku)
