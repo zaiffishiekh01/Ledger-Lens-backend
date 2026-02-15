@@ -48,6 +48,10 @@ class Transaction(models.Model):
 class PasscodeConfig(models.Model):
     """Single-row model for passcode configuration and rate limiting"""
     passcode_hash = models.CharField(max_length=255)
+    passcode_configured = models.BooleanField(
+        default=False,
+        help_text="True once a passcode has been set (setup page hidden). Allows 000000 as a valid user passcode."
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
     last_reset_at = models.DateTimeField(auto_now=True)
@@ -73,7 +77,8 @@ class PasscodeConfig(models.Model):
         config, created = cls.objects.get_or_create(
             pk=1,
             defaults={
-                'passcode_hash': make_password('000000'),  # Default placeholder
+                'passcode_hash': make_password('000000'),  # Placeholder until first setup
+                'passcode_configured': False,
                 'expires_at': timezone.now() + timedelta(days=7)
             }
         )
@@ -136,8 +141,9 @@ class PasscodeConfig(models.Model):
         self.save()
     
     def reset_passcode(self, new_code: str):
-        """Reset passcode and update expiration"""
+        """Reset passcode and update expiration. Marks passcode as configured (setup page no longer shown)."""
         self.passcode_hash = make_password(new_code)
+        self.passcode_configured = True
         self.expires_at = timezone.now() + timedelta(days=7)
         self.reset_attempts()
         self.save()

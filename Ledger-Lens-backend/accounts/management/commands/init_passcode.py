@@ -41,6 +41,7 @@ class Command(BaseCommand):
             pk=1,
             defaults={
                 'passcode_hash': make_password(passcode),
+                'passcode_configured': True,
                 'expires_at': timezone.now() + timedelta(days=7)
             }
         )
@@ -48,6 +49,7 @@ class Command(BaseCommand):
         if not created:
             # Update existing
             config.passcode_hash = make_password(passcode)
+            config.passcode_configured = True
             config.expires_at = timezone.now() + timedelta(days=7)
             config.reset_attempts()
             config.save()

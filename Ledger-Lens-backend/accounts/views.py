@@ -17,7 +17,6 @@ from .pdf_extractor import BankStatementExtractor
 from functools import wraps
 from django.utils import timezone
 from datetime import timedelta
-from django.contrib.auth.hashers import check_password
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -573,9 +572,9 @@ def check_auth_status(request):
     """Check authentication status, passcode setup status, and lockout status"""
     authenticated = request.session.get('authenticated', False)
     config = PasscodeConfig.get_config()
-    # Check if passcode is still default (not set up)
-    is_default = check_password('000000', config.passcode_hash)
-    
+    # Setup page only when no passcode has been set yet (allows 000000 as valid user passcode)
+    passcode_setup_required = not config.passcode_configured
+
     # Check passcode lockout status
     passcode_locked = False
     passcode_lockout_minutes = None
@@ -597,7 +596,7 @@ def check_auth_status(request):
     return Response(
         {
             'authenticated': authenticated,
-            'passcode_setup_required': is_default,
+            'passcode_setup_required': passcode_setup_required,
             'passcode_locked': passcode_locked,
             'passcode_lockout_minutes': passcode_lockout_minutes,
             'creds_locked': creds_locked,
