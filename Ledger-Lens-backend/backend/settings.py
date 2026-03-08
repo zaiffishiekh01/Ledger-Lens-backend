@@ -253,6 +253,7 @@ if not DEBUG:
     SESSION_COOKIE_SECURE = True
     SESSION_COOKIE_SAMESITE = 'None'  # required for cross-origin requests (frontend on different domain)
     CSRF_COOKIE_SECURE = True
+    CSRF_COOKIE_SAMESITE = 'None'  # so CSRF cookie is sent on cross-origin requests from SPA
     
     # Trust proxy headers (needed for Render/Heroku)
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')

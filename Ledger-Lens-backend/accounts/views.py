@@ -18,6 +18,7 @@ from .models import PDFUpload, Transaction, PasscodeConfig
 from .pdf_extractor import BankStatementExtractor
 from functools import wraps
 from django.utils import timezone
+from django.middleware.csrf import get_token
 from datetime import timedelta
 
 # Configure logging
@@ -43,6 +44,13 @@ class AuthLoginResetThrottle(AnonRateThrottle):
 
 class AuthStatusThrottle(AnonRateThrottle):
     scope = 'auth_status'
+
+
+@api_view(['GET'])
+def get_csrf_token(request):
+    """Return CSRF token for cross-origin SPA. Call with credentials: 'include'."""
+    token = get_token(request)
+    return Response({'csrfToken': token}, status=status.HTTP_200_OK)
 
 
 # Helper to extract only the required fields for the frontend
@@ -326,10 +334,10 @@ def upload_pdf(request):
             },
             status=status.HTTP_202_ACCEPTED
         )
-    except Exception as e:
-        logger.error(f"Error in upload_pdf: {str(e)}", exc_info=True)
+    except Exception:
+        logger.exception("Error in upload_pdf")
         return Response(
-            {'error': f'Error uploading file: {str(e)}'}, 
+            {'error': 'An error occurred. Please try again.'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
@@ -390,23 +398,48 @@ def get_pdf_results(request, pdf_id):
             {'error': 'PDF upload not found'}, 
             status=status.HTTP_404_NOT_FOUND
         )
-    except Exception as e:
-        logger.error(f"[PDF {pdf_id}] Error in get_pdf_results: {str(e)}", exc_info=True)
+    except Exception:
+        logger.exception("Error in get_pdf_results for pdf_id=%s", pdf_id)
         return Response(
-            {'error': f'Error retrieving results: {str(e)}'}, 
+            {'error': 'An error occurred. Please try again.'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+DEFAULT_PAGE_SIZE = 20
+MAX_PAGE_SIZE = 100
+
 
 @api_view(['GET'])
 @require_authentication
 def list_pdf_uploads(request):
     try:
-        pdf_uploads = PDFUpload.objects.all()
-        response_data = [get_frontend_result(pdf) for pdf in pdf_uploads]
-        return Response(response_data, status=status.HTTP_200_OK)
-    except Exception as e:
+        page = max(1, int(request.query_params.get('page', 1)))
+        page_size = min(MAX_PAGE_SIZE, max(1, int(request.query_params.get('page_size', DEFAULT_PAGE_SIZE))))
+        start = (page - 1) * page_size
+        end = start + page_size
+        qs = PDFUpload.objects.all().order_by('-uploaded_at')
+        total_count = qs.count()
+        page_qs = qs[start:end]
+        results = [get_frontend_result(pdf) for pdf in page_qs]
+        has_next = end < total_count
+        next_page = page + 1 if has_next else None
         return Response(
-            {'error': f'Error listing PDF uploads: {str(e)}'}, 
+            {
+                'results': results,
+                'count': total_count,
+                'next': next_page,
+            },
+            status=status.HTTP_200_OK
+        )
+    except (ValueError, TypeError):
+        return Response(
+            {'error': 'Invalid page or page_size.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    except Exception:
+        logger.exception("Error listing PDF uploads")
+        return Response(
+            {'error': 'An error occurred. Please try again.'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
@@ -430,15 +463,15 @@ def stop_pdf_processing(request, pdf_id):
             status=status.HTTP_200_OK
         )
     except PDFUpload.DoesNotExist:
-        logger.warning(f"[PDF {pdf_id}] Stop request for non-existent PDF")
+        logger.warning("[PDF %s] Stop request for non-existent PDF", pdf_id)
         return Response(
-            {'error': 'PDF upload not found'}, 
+            {'error': 'PDF upload not found'},
             status=status.HTTP_404_NOT_FOUND
         )
-    except Exception as e:
-        logger.error(f"[PDF {pdf_id}] Error stopping processing: {str(e)}", exc_info=True)
+    except Exception:
+        logger.exception("Error stopping processing for pdf_id=%s", pdf_id)
         return Response(
-            {'error': f'Error stopping processing: {str(e)}'}, 
+            {'error': 'An error occurred. Please try again.'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
@@ -456,12 +489,13 @@ def delete_pdf_upload(request, pdf_id):
         )
     except PDFUpload.DoesNotExist:
         return Response(
-            {'error': 'PDF upload not found'}, 
+            {'error': 'PDF upload not found'},
             status=status.HTTP_404_NOT_FOUND
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Error deleting PDF upload for pdf_id=%s", pdf_id)
         return Response(
-            {'error': f'Error deleting PDF upload: {str(e)}'}, 
+            {'error': 'An error occurred. Please try again.'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
