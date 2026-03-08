@@ -38,6 +38,12 @@ if not DEBUG:
     assert ADMIN_USERNAME, 'ADMIN_USERNAME must be set in production.'
     assert ADMIN_PASSWORD, 'ADMIN_PASSWORD must be set in production.'
 
+# Passcode policy: lockout and expiry (single place for consistency)
+PASSCODE_MAX_ATTEMPTS = 5
+PASSCODE_LOCKOUT_MINUTES = 15
+CREDS_LOCKOUT_MINUTES = 30
+PASSCODE_EXPIRY_DAYS = 7
+
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split(',') if os.getenv('ALLOWED_HOSTS') else []
 
 
@@ -101,8 +107,8 @@ DATABASES = {
         'OPTIONS': {
             'connect_timeout': 30,
         },
-        # Set to 0 for transaction pooler (pooler manages connection lifetime)
-        'CONN_MAX_AGE': 0,
+        # Reuse connections per process; align with pooler docs (e.g. PgBouncer) if needed
+        'CONN_MAX_AGE': 60,
     }
 }
 

@@ -1,5 +1,6 @@
 from django.db import models
 from django.utils import timezone
+from django.conf import settings as django_settings
 from django.contrib.auth.hashers import make_password, check_password
 from datetime import timedelta
 import json
@@ -9,8 +10,8 @@ import json
 class PDFUpload(models.Model):
     """Model to store uploaded PDF files and their extraction results"""
     file = models.FileField(upload_to='pdfs/')
-    uploaded_at = models.DateTimeField(default=timezone.now)
-    processed = models.BooleanField(default=False)
+    uploaded_at = models.DateTimeField(default=timezone.now, db_index=True)
+    processed = models.BooleanField(default=False, db_index=True)
     processing_error = models.TextField(blank=True, null=True)
     
     # Extracted data fields
@@ -79,7 +80,7 @@ class PasscodeConfig(models.Model):
             defaults={
                 'passcode_hash': make_password('000000'),  # Placeholder until first setup
                 'passcode_configured': False,
-                'expires_at': timezone.now() + timedelta(days=7)
+                'expires_at': timezone.now() + timedelta(days=getattr(django_settings, 'PASSCODE_EXPIRY_DAYS', 7))
             }
         )
         return config
@@ -120,18 +121,20 @@ class PasscodeConfig(models.Model):
     
     def increment_passcode_attempts(self):
         """Increment passcode attempts and lock if needed"""
+        max_attempts = getattr(django_settings, 'PASSCODE_MAX_ATTEMPTS', 5)
+        lockout_minutes = getattr(django_settings, 'PASSCODE_LOCKOUT_MINUTES', 15)
         self.passcode_attempts += 1
-        if self.passcode_attempts >= 5:
-            from datetime import timedelta
-            self.passcode_locked_until = timezone.now() + timedelta(minutes=15)
+        if self.passcode_attempts >= max_attempts:
+            self.passcode_locked_until = timezone.now() + timedelta(minutes=lockout_minutes)
         self.save()
-    
+
     def increment_creds_attempts(self):
         """Increment credential attempts and lock if needed"""
+        max_attempts = getattr(django_settings, 'PASSCODE_MAX_ATTEMPTS', 5)
+        lockout_minutes = getattr(django_settings, 'CREDS_LOCKOUT_MINUTES', 30)
         self.creds_attempts += 1
-        if self.creds_attempts >= 5:
-            from datetime import timedelta
-            self.creds_locked_until = timezone.now() + timedelta(minutes=30)
+        if self.creds_attempts >= max_attempts:
+            self.creds_locked_until = timezone.now() + timedelta(minutes=lockout_minutes)
         self.save()
     
     def reset_attempts(self):
@@ -144,8 +147,9 @@ class PasscodeConfig(models.Model):
     
     def reset_passcode(self, new_code: str):
         """Reset passcode and update expiration. Marks passcode as configured (setup page no longer shown)."""
+        expiry_days = getattr(django_settings, 'PASSCODE_EXPIRY_DAYS', 7)
         self.passcode_hash = make_password(new_code)
         self.passcode_configured = True
-        self.expires_at = timezone.now() + timedelta(days=7)
+        self.expires_at = timezone.now() + timedelta(days=expiry_days)
         self.reset_attempts()
         self.save()

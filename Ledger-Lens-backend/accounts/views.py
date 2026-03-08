@@ -506,17 +506,18 @@ def login_with_passcode(request):
             return Response({'success': True, 'message': 'Login successful'})
         else:
             config.increment_passcode_attempts()
-            remaining_attempts = 5 - config.passcode_attempts
+            max_attempts = getattr(django_settings, 'PASSCODE_MAX_ATTEMPTS', 5)
+            remaining_attempts = max_attempts - config.passcode_attempts
             if remaining_attempts > 0:
                 return Response(
-                    {'error': f'Incorrect passcode. {remaining_attempts} attempts remaining.'}, 
+                    {'error': f'Incorrect passcode. {remaining_attempts} attempts remaining.'},
                     status=status.HTTP_401_UNAUTHORIZED
                 )
-            else:
-                return Response(
-                    {'error': 'Too many failed attempts. Please wait 15 minutes.'}, 
-                    status=status.HTTP_429_TOO_MANY_REQUESTS
-                )
+            lockout_min = getattr(django_settings, 'PASSCODE_LOCKOUT_MINUTES', 15)
+            return Response(
+                {'error': f'Too many failed attempts. Please wait {lockout_min} minutes.'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS
+            )
     except Exception:
         logger.exception("Login error")
         return Response(
@@ -577,17 +578,18 @@ def reset_passcode(request):
             )
         if username != admin_username or password != admin_password:
             config.increment_creds_attempts()
-            remaining_attempts = 5 - config.creds_attempts
+            max_attempts = getattr(django_settings, 'PASSCODE_MAX_ATTEMPTS', 5)
+            remaining_attempts = max_attempts - config.creds_attempts
             if remaining_attempts > 0:
                 return Response(
-                    {'error': f'Invalid username or password. {remaining_attempts} attempts remaining.'}, 
+                    {'error': f'Invalid username or password. {remaining_attempts} attempts remaining.'},
                     status=status.HTTP_401_UNAUTHORIZED
                 )
-            else:
-                return Response(
-                    {'error': 'Too many failed attempts. Please wait 30 minutes.'}, 
-                    status=status.HTTP_429_TOO_MANY_REQUESTS
-                )
+            lockout_min = getattr(django_settings, 'CREDS_LOCKOUT_MINUTES', 30)
+            return Response(
+                {'error': f'Too many failed attempts. Please wait {lockout_min} minutes.'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS
+            )
         
         # Reset passcode
         config.reset_passcode(new_passcode)

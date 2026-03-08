@@ -60,10 +60,9 @@ class BankStatementExtractor:
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 self.config = json.load(f)
-            print(f"Configuration loaded from: {config_path}")
+            logger.info("Configuration loaded from: %s", config_path)
         except Exception as e:
-            print(f"Error loading config file: {e}")
-            print("Using default configuration...")
+            logger.warning("Error loading config file: %s. Using default configuration.", e)
             self.load_default_config()
     
     def load_default_config(self):
@@ -141,7 +140,7 @@ class BankStatementExtractor:
         """Save current configuration as a template JSON file"""
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(self.config, f, ensure_ascii=False, indent=2)
-        print(f"Configuration template saved to: {output_path}")
+        logger.info("Configuration template saved to: %s", output_path)
     
     def get_ocr_config(self, config_type="combined_config"):
         """Get OCR configuration"""
@@ -451,7 +450,7 @@ class BankStatementExtractor:
     def extract_header_from_second_page(self, text_pages):
         """Extract header text from the specific position in second page"""
         if len(text_pages) < 2:
-            print("Not enough pages to extract header from second page")
+            logger.debug("Not enough pages to extract header from second page")
             return None
         
         second_page_text = text_pages[1]  # Index 1 for second page
@@ -523,13 +522,12 @@ class BankStatementExtractor:
                         'is_LTR': is_date_header,
                     }
         
-        # If no proper table header found, show some context for debugging
+        # If no proper table header found, log context for debugging
         if not table_header_found:
-            print(f"\n=== NO TABLE HEADER FOUND ===")
-            print(f"Showing more context from second page (lines 10-20):")
+            logger.debug("NO TABLE HEADER FOUND. Showing context from second page (lines 10-20):")
             for i in range(9, min(20, len(lines))):
                 if lines[i].strip():
-                    print(f"  Line {i+1}: '{lines[i].strip()}'")
+                    logger.debug("  Line %s: '%s'", i + 1, lines[i].strip())
         
         return None
 
@@ -814,7 +812,7 @@ class BankStatementExtractor:
             }
             
         except Exception as e:
-            print(f"Error parsing transaction line: {e}")
+            logger.warning("Error parsing transaction line: %s", e)
             return None
 
 
@@ -868,7 +866,7 @@ class BankStatementExtractor:
             }
             
         except Exception as e:
-            print(f"Error parsing transaction line: {e}")
+            logger.warning("Error parsing transaction line: %s", e)
             return None
 
 
@@ -1075,7 +1073,7 @@ class BankStatementExtractor:
                         monthly_stats[year_month]['international_outward_total'] += debit_amount
                 
             except Exception as e:
-                print(f"Error processing transaction date: {e}")
+                logger.warning("Error processing transaction date: %s", e)
                 continue
 
         # Calculate opening balance, closing balance, and minimum balance for each month
@@ -1200,58 +1198,21 @@ class BankStatementExtractor:
 
 
     def print_summary(self, results):
-        """Print a summary of extracted information"""
-
+        """Log a summary of extracted information (debug level)."""
         account_info = results.get('account_info', {})
-            
-        print(f"Customer Name: {account_info.get('customer_name', 'N/A')}\n")
-        print(f"City: {account_info.get('city', 'N/A')}\n")
-        print(f"Account Number: {account_info.get('account_number', 'N/A')}\n")
-        print(f"IBAN Number: {account_info.get('iban_number', 'N/A')}\n")
-        print(f"Opening Balance: {account_info.get('opening_balance', 'N/A')}\n")
-        print(f"Closing Balance: {account_info.get('closing_balance', 'N/A')}\n")
-        print(f"Financial Period: {account_info.get('financial_period', 'N/A')}\n")
-        
-        print(f"Pages Processed: {results.get('pages_processed', 'N/A')}")
-        print(f"Total Transactions: {results.get('total_transactions', 0)}")
-
-        # Monthly analysis summary
+        logger.debug(
+            "Extract summary: customer=%s, account=%s, pages=%s, transactions=%s",
+            account_info.get('customer_name', 'N/A'),
+            account_info.get('account_number', 'N/A'),
+            results.get('pages_processed', 'N/A'),
+            results.get('total_transactions', 0),
+        )
         monthly_analysis = results.get('monthly_analysis', {})
         if monthly_analysis:
-            print("\nMONTHLY ANALYSIS:\n")
-            print("-" * 30 + "\n")
-            for month, stats in monthly_analysis.items():
-                print(f"\n{month}:\n")
-                print(f"  Transaction Count: {stats['count']}\n")
-                print(f"  Total Credits: {stats['total_credit']:.2f}\n")
-                print(f"  Total Debits: {stats['total_debit']:.2f}\n")
-                opening_bal = f"{stats['opening_balance']:.2f}" if stats['opening_balance'] is not None else 'N/A'
-                closing_bal = f"{stats['closing_balance']:.2f}" if stats['closing_balance'] is not None else 'N/A'
-                minimum_bal = f"{stats['minimum_balance']:.2f}" if stats['minimum_balance'] is not None else 'N/A'
-                    
-                print(f"  Opening Balance: {opening_bal}\n")
-                print(f"  Closing Balance: {closing_bal}\n")
-                print(f"  Minimum Balance: {minimum_bal}\n")
-                print(f"  International Inward: {stats['international_inward_count']} transactions, Total: {stats['international_inward_total']:.2f}\n")
-                print(f"  International Outward: {stats['international_outward_count']} transactions, Total: {stats['international_outward_total']:.2f}\n")
-
-        # Overdraft analysis summary
+            logger.debug("Monthly analysis: %s months", len(monthly_analysis))
         overdraft_analysis = results.get('overdraft_analysis', {})
         if overdraft_analysis:
-            print("\nOVERDRAFT ANALYSIS:\n")
-            print("-" * 30 + "\n")
-            for month, stats in overdraft_analysis.items():
-                if stats['total_overdraft_occurrences'] > 0:
-                    print(f"\n{month}:\n")
-                    print(f"  Overdraft Occurrences: {stats['total_overdraft_occurrences']}\n")
-                    print(f"  Total Overdraft Days: {stats['total_overdraft_days']}\n")
-                    print(f"  Maximum Overdraft Amount: {stats['max_overdraft_amount']:.2f}\n")
-                        
-                    # Show overdraft periods
-                    for i, period in enumerate(stats['overdraft_periods'], 1):
-                        print(f"    Period {i}: {period['start_date'].strftime('%Y-%m-%d')} to {period['end_date'].strftime('%Y-%m-%d')} ({period['duration_days']} days)\n")
-                        if period.get('note'):
-                            print(f"      Note: {period['note']}\n")
+            logger.debug("Overdraft analysis: %s months", len(overdraft_analysis))
             
 
 
