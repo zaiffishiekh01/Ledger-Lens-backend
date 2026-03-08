@@ -1,8 +1,10 @@
 from django.shortcuts import render
+from django.conf import settings as django_settings
 from rest_framework import status
-from rest_framework.decorators import api_view, parser_classes
+from rest_framework.decorators import api_view, parser_classes, throttle_classes
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.throttling import AnonRateThrottle
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from django.db import transaction
@@ -33,6 +35,15 @@ def require_authentication(view_func):
             )
         return view_func(request, *args, **kwargs)
     return wrapper
+
+# Rate limiting for auth endpoints (per IP); rates defined in settings REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']
+class AuthLoginResetThrottle(AnonRateThrottle):
+    scope = 'auth_login_reset'
+
+
+class AuthStatusThrottle(AnonRateThrottle):
+    scope = 'auth_status'
+
 
 # Helper to extract only the required fields for the frontend
 FRONTEND_FIELDS = [
@@ -164,24 +175,27 @@ def process_pdf_background(pdf_upload_id):
         pdf_upload.save()
         logger.info(f"[PDF {pdf_upload_id}] Results saved to database")
         
-        # Create transaction records
-        transactions = results.get('transactions', [])
-        logger.info(f"[PDF {pdf_upload_id}] Creating {len(transactions)} transaction records...")
+        # Create transaction records in batches (bulk_create)
+        transactions_data = results.get('transactions', [])
+        logger.info("[PDF %s] Creating %s transaction records (bulk)...", pdf_upload_id, len(transactions_data))
+        BATCH_SIZE = 500
         transaction_count = 0
-        for transaction_data in transactions:
-            Transaction.objects.create(
-                pdf_upload=pdf_upload,
-                date=transaction_data.get('date', ''),
-                description=transaction_data.get('description', ''),
-                debit=transaction_data.get('debit', 0),
-                credit=transaction_data.get('credit', 0),
-                balance=transaction_data.get('balance', 0)
-            )
-            transaction_count += 1
-            if transaction_count % 100 == 0:
-                logger.info(f"[PDF {pdf_upload_id}] Created {transaction_count}/{len(transactions)} transactions...")
-        
-        logger.info(f"[PDF {pdf_upload_id}] All {transaction_count} transactions created")
+        for i in range(0, len(transactions_data), BATCH_SIZE):
+            batch = transactions_data[i:i + BATCH_SIZE]
+            objs = [
+                Transaction(
+                    pdf_upload=pdf_upload,
+                    date=t.get('date', ''),
+                    description=t.get('description', ''),
+                    debit=t.get('debit', 0),
+                    credit=t.get('credit', 0),
+                    balance=t.get('balance', 0),
+                )
+                for t in batch
+            ]
+            Transaction.objects.bulk_create(objs)
+            transaction_count += len(objs)
+        logger.info("[PDF %s] All %s transactions created", pdf_upload_id, transaction_count)
         
         total_elapsed = (datetime.now() - start_time).total_seconds()
         logger.info(f"[PDF {pdf_upload_id}] Processing completed successfully in {total_elapsed:.2f} seconds")
@@ -246,12 +260,21 @@ def upload_pdf(request):
         logger.info(f"Upload request received: {pdf_file.name}, size: {file_size} bytes")
         
         if not pdf_file.name.lower().endswith('.pdf'):
-            logger.warning(f"Invalid file type: {pdf_file.name}")
+            logger.warning("Invalid file type: %s", pdf_file.name)
             return Response(
-                {'error': 'Only PDF files are allowed'}, 
+                {'error': 'Only PDF files are allowed'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+        pdf_file.seek(0)
+        header = pdf_file.read(5)
+        pdf_file.seek(0)
+        if header != b'%PDF-':
+            logger.warning("Upload rejected: file does not have PDF magic bytes: %s", pdf_file.name)
+            return Response(
+                {'error': 'File is not a valid PDF.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         # Clear all pending PDFs and their data before uploading new one
         logger.info("Clearing all pending PDF uploads and storage...")
         pending_pdfs = PDFUpload.objects.filter(processed=False)
@@ -445,6 +468,7 @@ def delete_pdf_upload(request, pdf_id):
 
 # Authentication views
 @api_view(['POST'])
+@throttle_classes([AuthLoginResetThrottle])
 def login_with_passcode(request):
     """Login with 6-digit passcode"""
     try:
@@ -457,7 +481,8 @@ def login_with_passcode(request):
             )
         
         config = PasscodeConfig.get_config()
-        
+        config.clear_expired_passcode_lock()
+
         # Check if locked
         if config.is_passcode_locked():
             remaining = (config.passcode_locked_until - timezone.now()).total_seconds()
@@ -492,14 +517,16 @@ def login_with_passcode(request):
                     {'error': 'Too many failed attempts. Please wait 15 minutes.'}, 
                     status=status.HTTP_429_TOO_MANY_REQUESTS
                 )
-    except Exception as e:
+    except Exception:
+        logger.exception("Login error")
         return Response(
-            {'error': f'Login error: {str(e)}'}, 
+            {'error': 'An error occurred. Please try again.'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 
 @api_view(['POST'])
+@throttle_classes([AuthLoginResetThrottle])
 def reset_passcode(request):
     """Reset passcode using admin credentials"""
     try:
@@ -528,7 +555,8 @@ def reset_passcode(request):
             )
         
         config = PasscodeConfig.get_config()
-        
+        config.clear_expired_creds_lock()
+
         # Check if locked
         if config.is_creds_locked():
             remaining = (config.creds_locked_until - timezone.now()).total_seconds()
@@ -538,10 +566,15 @@ def reset_passcode(request):
                 status=status.HTTP_429_TOO_MANY_REQUESTS
             )
         
-        # Verify credentials
-        admin_username = os.getenv('ADMIN_USERNAME', 'admin')
-        admin_password = os.getenv('ADMIN_PASSWORD', '')
-        
+        # Verify credentials (from settings; required in production)
+        admin_username = getattr(django_settings, 'ADMIN_USERNAME', None)
+        admin_password = getattr(django_settings, 'ADMIN_PASSWORD', None)
+        if not admin_username or not admin_password:
+            logger.warning("Admin credentials not configured")
+            return Response(
+                {'error': 'Server misconfiguration. Please contact support.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         if username != admin_username or password != admin_password:
             config.increment_creds_attempts()
             remaining_attempts = 5 - config.creds_attempts
@@ -560,14 +593,16 @@ def reset_passcode(request):
         config.reset_passcode(new_passcode)
         return Response({'success': True, 'message': 'Passcode reset successful'})
         
-    except Exception as e:
+    except Exception:
+        logger.exception("Reset passcode error")
         return Response(
-            {'error': f'Reset error: {str(e)}'}, 
+            {'error': 'An error occurred. Please try again.'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 
 @api_view(['GET'])
+@throttle_classes([AuthStatusThrottle])
 def check_auth_status(request):
     """Check authentication status, passcode setup status, and lockout status"""
     authenticated = request.session.get('authenticated', False)

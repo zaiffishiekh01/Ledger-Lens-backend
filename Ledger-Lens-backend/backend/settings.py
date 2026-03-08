@@ -26,9 +26,17 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv('SECRET_KEY')
+assert SECRET_KEY, 'SECRET_KEY must be set. Configure it in your environment.'
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
+
+# Admin credentials required in production (used for passcode reset).
+ADMIN_USERNAME = os.getenv('ADMIN_USERNAME')
+ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD')
+if not DEBUG:
+    assert ADMIN_USERNAME, 'ADMIN_USERNAME must be set in production.'
+    assert ADMIN_PASSWORD, 'ADMIN_PASSWORD must be set in production.'
 
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split(',') if os.getenv('ALLOWED_HOSTS') else []
 
@@ -140,7 +148,6 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 # Use Supabase Storage in production, local filesystem in development
 USE_SUPABASE_STORAGE_ENV = os.getenv('USE_SUPABASE_STORAGE', 'False')
 USE_SUPABASE_STORAGE = USE_SUPABASE_STORAGE_ENV.lower() == 'true'
-print(f"[SETTINGS] USE_SUPABASE_STORAGE env value: '{USE_SUPABASE_STORAGE_ENV}' -> {USE_SUPABASE_STORAGE}")
 
 if USE_SUPABASE_STORAGE:
     # Supabase Storage (S3-compatible)
@@ -150,21 +157,14 @@ if USE_SUPABASE_STORAGE:
     AWS_S3_ENDPOINT_URL = os.getenv('SUPABASE_STORAGE_ENDPOINT_URL')  # e.g., https://your-project.supabase.co/storage/v1/s3
     AWS_S3_REGION_NAME = os.getenv('SUPABASE_STORAGE_REGION', 'us-east-1')
     AWS_S3_CUSTOM_DOMAIN = os.getenv('SUPABASE_STORAGE_CUSTOM_DOMAIN')  # Optional: CDN domain
-    
-    print(f"[SETTINGS] Supabase Storage enabled")
-    print(f"[SETTINGS] AWS_ACCESS_KEY_ID present: {bool(AWS_ACCESS_KEY_ID)}")
-    print(f"[SETTINGS] AWS_SECRET_ACCESS_KEY present: {bool(AWS_SECRET_ACCESS_KEY)}")
-    print(f"[SETTINGS] AWS_STORAGE_BUCKET_NAME: {AWS_STORAGE_BUCKET_NAME}")
-    print(f"[SETTINGS] AWS_S3_ENDPOINT_URL: {AWS_S3_ENDPOINT_URL}")
-    print(f"[SETTINGS] AWS_S3_REGION_NAME: {AWS_S3_REGION_NAME}")
-    
+
     AWS_S3_OBJECT_PARAMETERS = {
         'CacheControl': 'max-age=86400',
     }
     AWS_DEFAULT_ACL = 'private'  # Private bucket - only backend can access
     AWS_S3_FILE_OVERWRITE = False
     AWS_QUERYSTRING_AUTH = True  # Use signed URLs for secure access
-    
+
     # Use S3 for media files (Django 6.0 uses STORAGES dict)
     STORAGES = {
         'default': {
@@ -175,8 +175,6 @@ if USE_SUPABASE_STORAGE:
         },
     }
     MEDIA_URL = f'{AWS_S3_ENDPOINT_URL}/{AWS_STORAGE_BUCKET_NAME}/'
-    print(f"[SETTINGS] Using Supabase Storage backend: storages.backends.s3boto3.S3Boto3Storage")
-    print(f"[SETTINGS] MEDIA_URL: {MEDIA_URL}")
 else:
     # Local filesystem (development)
     STORAGES = {
@@ -189,8 +187,6 @@ else:
     }
     MEDIA_URL = '/media/'
     MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
-    print(f"[SETTINGS] Using local filesystem storage")
-    print(f"[SETTINGS] MEDIA_ROOT: {MEDIA_ROOT}")
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -207,7 +203,30 @@ REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
     ],
+    'DEFAULT_THROTTLE_RATES': {
+        'auth_login_reset': '20/minute',
+        'auth_status': '60/minute',
+    },
 }
+
+# Cache: Redis when REDIS_URL is set (e.g. Render Key-Value); otherwise DummyCache for local dev
+REDIS_URL = os.getenv('REDIS_URL')
+if REDIS_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django_redis.cache.RedisCache',
+            'LOCATION': REDIS_URL,
+            'OPTIONS': {
+                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            },
+        },
+    }
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
+        },
+    }
 
 # CORS settings
 CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'False').lower() == 'true'

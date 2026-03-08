@@ -93,28 +93,30 @@ class PasscodeConfig(models.Model):
         return timezone.now() > self.expires_at
     
     def is_passcode_locked(self) -> bool:
-        """Check if passcode attempts are locked"""
-        if self.passcode_locked_until:
-            if timezone.now() < self.passcode_locked_until:
-                return True
-            else:
-                # Lock expired, reset
-                self.passcode_attempts = 0
-                self.passcode_locked_until = None
-                self.save()
-        return False
-    
+        """Read-only: True if currently locked (no DB write). Use clear_expired_passcode_lock() before login to reset expired lock."""
+        if not self.passcode_locked_until:
+            return False
+        return timezone.now() < self.passcode_locked_until
+
     def is_creds_locked(self) -> bool:
-        """Check if credential attempts are locked"""
-        if self.creds_locked_until:
-            if timezone.now() < self.creds_locked_until:
-                return True
-            else:
-                # Lock expired, reset
-                self.creds_attempts = 0
-                self.creds_locked_until = None
-                self.save()
-        return False
+        """Read-only: True if currently locked (no DB write). Use clear_expired_creds_lock() before reset to reset expired lock."""
+        if not self.creds_locked_until:
+            return False
+        return timezone.now() < self.creds_locked_until
+
+    def clear_expired_passcode_lock(self) -> None:
+        """If passcode lock has expired, reset it and save. Call before login check."""
+        if self.passcode_locked_until and timezone.now() >= self.passcode_locked_until:
+            self.passcode_attempts = 0
+            self.passcode_locked_until = None
+            self.save()
+
+    def clear_expired_creds_lock(self) -> None:
+        """If creds lock has expired, reset it and save. Call before reset check."""
+        if self.creds_locked_until and timezone.now() >= self.creds_locked_until:
+            self.creds_attempts = 0
+            self.creds_locked_until = None
+            self.save()
     
     def increment_passcode_attempts(self):
         """Increment passcode attempts and lock if needed"""
