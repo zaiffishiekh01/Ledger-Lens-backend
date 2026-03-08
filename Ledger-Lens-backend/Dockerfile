@@ -53,8 +53,8 @@ RUN mkdir -p /app/media/pdfs && \
     chown -R appuser:appuser /app/media && \
     chmod -R 700 /app/media
 
-# Collect static files (run as root, then switch user)
-RUN python manage.py collectstatic --noinput || true
+# Collect static files (build has no env; use placeholders so Django settings load)
+RUN SECRET_KEY=build DEBUG=true python manage.py collectstatic --noinput || true
 
 # Switch to non-privileged user
 USER appuser

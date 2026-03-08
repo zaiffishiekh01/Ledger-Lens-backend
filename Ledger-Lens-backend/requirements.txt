@@ -15,3 +15,4 @@ tzdata==2025.3
 psycopg2-binary==2.9.11
 django-storages==1.14.2
 boto3==1.35.0
+django-redis==5.4.0
